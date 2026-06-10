@@ -1,0 +1,15 @@
+# 依赖与构建产物
+node_modules/
+dist/
+
+# 密钥配置（任何大小写/变体都不入库）
+.env
+.ENV
+.env.*
+!.env.example
+
+# 日志与系统文件
+*.log
+npm-debug.log*
+Thumbs.db
+.DS_Store
