@@ -5,8 +5,14 @@ interface ChatMessage {
   content: string;
 }
 
+export interface ModelReply {
+  content: string;
+  /** 推理模型的思考过程（OpenAI 兼容字段 reasoning_content / reasoning） */
+  reasoning?: string;
+}
+
 /** 经由本地后端代理调用任意 OpenAI 兼容端点 */
-export async function callModel(cfg: ApiConfig, messages: ChatMessage[]): Promise<string> {
+export async function callModel(cfg: ApiConfig, messages: ChatMessage[]): Promise<ModelReply> {
   const res = await fetch('/api/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -22,11 +28,15 @@ export async function callModel(cfg: ApiConfig, messages: ChatMessage[]): Promis
     const detail = data?.error?.message ?? data?.error ?? `HTTP ${res.status}`;
     throw new Error(typeof detail === 'string' ? detail : JSON.stringify(detail));
   }
-  const content = data?.choices?.[0]?.message?.content;
+  const msg = data?.choices?.[0]?.message;
+  const content = msg?.content;
   if (typeof content !== 'string' || !content.trim()) {
     throw new Error('模型返回了空内容');
   }
-  return content;
+  const rawReasoning = msg?.reasoning_content ?? msg?.reasoning;
+  const reasoning =
+    typeof rawReasoning === 'string' && rawReasoning.trim() ? rawReasoning.trim() : undefined;
+  return { content, reasoning };
 }
 
 /** 从模型输出里提取 {speech, action} JSON（容忍代码块围栏与前后杂文） */
@@ -48,5 +58,6 @@ export function parseAIResponse(text: string): AIResponse {
   const action =
     typeof r.action === 'object' && r.action !== null ? (r.action as Record<string, unknown>) : {};
   const speech = typeof r.speech === 'string' && r.speech.trim() ? r.speech.trim() : undefined;
-  return { speech, action };
+  const thought = typeof r.thought === 'string' && r.thought.trim() ? r.thought.trim() : undefined;
+  return { thought, speech, action };
 }

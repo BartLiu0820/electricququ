@@ -71,6 +71,15 @@ function randomOf<T>(arr: T[]): T {
   return arr[Math.floor(Math.random() * arr.length)];
 }
 
+function shuffle<T>(arr: T[]): T[] {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
 export const rpsGame: GameDefinition<RpsState> = {
   id: 'rps',
   name: '石头剪子布·博弈版',
@@ -91,8 +100,9 @@ export const rpsGame: GameDefinition<RpsState> = {
 
   setup: (players, judge, options) => {
     const totalRounds = Math.max(1, Math.min(15, Number(options.totalRounds) || 5));
+    const order = shuffle(players); // 掷硬币：随机先后手座次
     return {
-      players: players.map((p) => ({ id: p.id, name: p.name })),
+      players: order.map((p) => ({ id: p.id, name: p.name })),
       judgeId: judge?.id ?? null,
       totalRounds,
       round: 1,
@@ -124,16 +134,19 @@ export const rpsGame: GameDefinition<RpsState> = {
     }
 
     if (state.phase === 'throw') {
-      const actor = state.players.find((p) => !(p.id in state.throws))!;
+      const pendingIds = state.players.filter((p) => !(p.id in state.throws)).map((p) => p.id);
       const talks = state.talks.map((t) => `${name(state, t.id)}：“${t.text}”`).join('\n');
       return {
-        actorId: actor.id,
-        phase: '秘密出拳',
+        actorId: pendingIds[0],
+        simultaneous: pendingIds, // 全员一步同时出拳
+        revealThinking: true, // 都决定完才揭幕，故出拳思考可展示
+        phase: '同时出拳',
         instruction:
-          '出拳阶段：秘密选择你的手势，move 取 "rock"（石头）/"paper"（布）/"scissors"（剪刀）之一。其他玩家看不到你的选择。',
-        visibleState: `${common}\n本局喊话记录：\n${talks || '（无人发言）'}\n（其他玩家是否已出拳对你保密）`,
+          '出拳阶段：所有玩家此刻同时秘密出拳，你看不到别人的选择，别人也看不到你的。请结合本局喊话综合判断后，秘密选择你的手势，move 取 "rock"（石头）/"paper"（布）/"scissors"（剪刀）之一。',
+        visibleState: `${common}\n本局喊话记录：\n${talks || '（无人发言）'}\n（所有人此刻同时出拳，彼此选择互不可见）`,
         schemaHint: '{"type":"throw","move":"rock|paper|scissors"}',
         suppressSpeech: true,
+        decisive: true,
         botAction: () => ({
           action: { type: 'throw', move: randomOf(['rock', 'paper', 'scissors'] as RpsMove[]) },
         }),

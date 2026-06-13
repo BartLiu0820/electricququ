@@ -51,8 +51,8 @@ export function RpsArena({ state }: GameViewProps<RpsState>) {
                     {gain > 0 && <span className="gain">+{gain}</span>}
                   </div>
                 ) : state.phase === 'throw' ? (
-                  <div className={`hand ${hasThrown ? 'thrown' : 'waiting shake'}`}>
-                    {hasThrown ? '🤛' : '❔'}
+                  <div className={`hand ${hasThrown ? 'locked' : 'waiting shake'}`}>
+                    {hasThrown ? '🔒' : '❔'}
                   </div>
                 ) : (
                   <div className="hand idle">✊</div>

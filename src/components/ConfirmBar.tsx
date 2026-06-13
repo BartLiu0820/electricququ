@@ -8,7 +8,12 @@ export function ConfirmBar() {
     ? (config.players.find((p) => p.id === pending.actorId) ??
       (config.judge?.id === pending.actorId ? config.judge : null))
     : null;
-  const actorLabel = actor ? `${actor.name}${actor.role === 'judge' ? '（裁判）' : ''}` : '';
+  const actorLabel =
+    pending?.simultaneous && pending.simultaneous.length > 1
+      ? '全体玩家'
+      : actor
+        ? `${actor.name}${actor.role === 'judge' ? '（裁判）' : ''}`
+        : '';
 
   return (
     <div className="confirm-bar">

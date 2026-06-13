@@ -14,6 +14,15 @@ export interface PendingAction {
   schemaHint: string;
   /** true 时丢弃该步的 speech（如秘密出拳阶段防止泄露） */
   suppressSpeech?: boolean;
+  /** true 表示这是"真正出手"的关键决断步（出拳/出牌），提示 AI 结合对手最新发言临场决策 */
+  decisive?: boolean;
+  /**
+   * 同时决策的行动者 id 列表（如石头剪子布出拳）：一次推进让所有人并行思考、同时出手，
+   * 最后统一揭幕。设置后引擎会对该步并行调用各行动者模型。actorId 取列表首位用于展示兜底。
+   */
+  simultaneous?: string[];
+  /** 即使 suppressSpeech 也展示思考过程（用于同时出拳——全员决定完才揭幕，不算剧透） */
+  revealThinking?: boolean;
   /** 测试机器人 / AI 连续失败时的兜底动作 */
   botAction: () => AIResponse;
 }

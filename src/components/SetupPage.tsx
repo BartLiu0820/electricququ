@@ -19,6 +19,14 @@ interface SlotForm extends ApiConfig {
   name: string;
 }
 
+/** 服务端 /api/presets 返回的 .env 预设（key 以 env:VAR 引用，不下发明文） */
+interface EnvPreset {
+  label: string;
+  baseURL: string;
+  model: string;
+  keyRef: string;
+}
+
 interface SetupForm {
   gameId: string;
   playerCount: number;
@@ -30,6 +38,53 @@ interface SetupForm {
 
 function defaultSlot(name: string): SlotForm {
   return { name, kind: 'bot', baseURL: '', apiKey: '', model: '' };
+}
+
+/**
+ * 从一段自由文本里自动识别 baseURL / apiKey / model。
+ * 兼容：三行各一项、key=value、key: value、逗号分隔、带中英文标签等。
+ */
+function parseConfigPaste(raw: string): { baseURL?: string; apiKey?: string; model?: string } {
+  const out: { baseURL?: string; apiKey?: string; model?: string } = {};
+  const text = (raw ?? '').trim();
+  if (!text) return out;
+
+  // 1) 优先抓带标签的键值对（不用 \b：中文字符前 ASCII 词边界不成立）
+  const labelRe =
+    /["']?(base[_\s-]?url|url|端点|地址|api[_\s-]?key|key|密钥|model|模型名|模型)["']?\s*[:=：]\s*["']?([^"'\n,]+?)["']?(?=\s*[\n,]|$)/gi;
+  const consumed: string[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = labelRe.exec(text))) {
+    const label = m[1].toLowerCase().replace(/[_\s-]/g, '');
+    const val = m[2].trim();
+    if (!val) continue;
+    if (/(baseurl|url|端点|地址)/.test(label)) out.baseURL = val;
+    else if (/(apikey|key|密钥)/.test(label)) out.apiKey = val;
+    else if (/(model|模型)/.test(label)) out.model = val;
+    consumed.push(m[0]);
+  }
+
+  // 2) 剩余未消费部分按 token 拆分，靠特征分类
+  let rest = text;
+  for (const c of consumed) rest = rest.replace(c, ' ');
+  const tokens = rest
+    .split(/[\s,]+/)
+    .map((t) => t.trim().replace(/^["']|["']$/g, ''))
+    // 跳过残留的标签碎片：含中文，或「纯标签词 + 冒号」（不误伤含 :// 的 URL）
+    .filter((t) => t && !/[一-龥]/.test(t) && !/^[A-Za-z_]+[:：]$/.test(t));
+  for (const tok of tokens) {
+    if (!out.baseURL && /^https?:\/\//i.test(tok)) {
+      out.baseURL = tok;
+    } else if (
+      !out.apiKey &&
+      (/^sk-/i.test(tok) || (tok.length >= 20 && /^[A-Za-z0-9_-]+$/.test(tok)))
+    ) {
+      out.apiKey = tok;
+    } else if (!out.model) {
+      out.model = tok;
+    }
+  }
+  return out;
 }
 
 function defaultForm(): SetupForm {
@@ -58,13 +113,36 @@ function loadForm(): SetupForm {
 function SlotEditor({
   slot,
   title,
+  presets,
   onChange,
 }: {
   slot: SlotForm;
   title: string;
+  presets: EnvPreset[];
   onChange: (s: SlotForm) => void;
 }) {
   const set = <K extends keyof SlotForm>(k: K, v: SlotForm[K]) => onChange({ ...slot, [k]: v });
+  const [pasteOpen, setPasteOpen] = useState(false);
+  const [pasteHint, setPasteHint] = useState('');
+
+  const applyPaste = (raw: string) => {
+    const parsed = parseConfigPaste(raw);
+    const got = Object.entries(parsed).filter(([, v]) => v);
+    if (got.length === 0) {
+      setPasteHint('⚠️ 没识别出任何字段，请检查粘贴内容');
+      return;
+    }
+    onChange({
+      ...slot,
+      kind: 'api',
+      baseURL: parsed.baseURL ?? slot.baseURL,
+      apiKey: parsed.apiKey ?? slot.apiKey,
+      model: parsed.model ?? slot.model,
+    });
+    const labels: Record<string, string> = { baseURL: 'Base URL', apiKey: 'API Key', model: '模型名' };
+    setPasteHint(`✅ 已识别并填入：${got.map(([k]) => labels[k]).join('、')}`);
+  };
+
   return (
     <div className="slot-card">
       <div className="slot-head">
@@ -80,6 +158,49 @@ function SlotEditor({
           <option value="api">🧠 真实模型（OpenAI 兼容）</option>
         </select>
       </div>
+      {slot.kind === 'api' && presets.length > 0 && (
+        <div className="preset-row">
+          <span className="preset-label">从 .env 导入：</span>
+          {presets.map((p) => (
+            <button
+              key={p.label}
+              className="btn tiny preset-chip"
+              title={`${p.baseURL}　${p.model}`}
+              onClick={() =>
+                onChange({ ...slot, kind: 'api', baseURL: p.baseURL, model: p.model, apiKey: p.keyRef })
+              }
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+      )}
+      {slot.kind === 'api' && (
+        <div className="paste-row">
+          <button
+            className="btn tiny paste-toggle"
+            onClick={() => {
+              setPasteOpen((v) => !v);
+              setPasteHint('');
+            }}
+          >
+            📋 批量粘贴
+          </button>
+          {pasteOpen && (
+            <div className="paste-box">
+              <textarea
+                autoFocus
+                className="paste-area"
+                placeholder={
+                  '把 Base URL、API Key、模型名一起粘进来，自动识别填入。\n支持三行 / 逗号分隔 / key=value 等格式，例如：\nhttps://api.deepseek.com\nsk-xxxxxxxx\ndeepseek-chat'
+                }
+                onChange={(e) => applyPaste(e.target.value)}
+              />
+              {pasteHint && <span className="paste-hint">{pasteHint}</span>}
+            </div>
+          )}
+        </div>
+      )}
       {slot.kind === 'api' && (
         <div className="slot-fields">
           <label className="field">
@@ -117,10 +238,18 @@ export function SetupPage() {
   const [games, setGames] = useState(listGames);
   const [editorOpen, setEditorOpen] = useState(false);
   const [err, setErr] = useState('');
+  const [presets, setPresets] = useState<EnvPreset[]>([]);
 
   useEffect(() => {
     localStorage.setItem(SETUP_KEY, JSON.stringify(form));
   }, [form]);
+
+  useEffect(() => {
+    fetch('/api/presets')
+      .then((r) => r.json())
+      .then((d) => setPresets(Array.isArray(d.presets) ? d.presets : []))
+      .catch(() => {});
+  }, []);
 
   const game = useMemo(() => games.find((g) => g.id === form.gameId) ?? games[0], [games, form.gameId]);
 
@@ -273,7 +402,7 @@ export function SetupPage() {
         </div>
         <div className="slots">
           {form.players.slice(0, form.playerCount).map((s, i) => (
-            <SlotEditor key={i} slot={s} title={`玩家 ${i + 1}`} onChange={(v) => setSlot(i, v)} />
+            <SlotEditor key={i} slot={s} title={`玩家 ${i + 1}`} presets={presets} onChange={(v) => setSlot(i, v)} />
           ))}
         </div>
       </section>
@@ -295,7 +424,12 @@ export function SetupPage() {
           )}
           {form.judgeOn && (
             <div className="slots">
-              <SlotEditor slot={form.judge} title="裁判" onChange={(v) => setForm((f) => ({ ...f, judge: v }))} />
+              <SlotEditor
+                slot={form.judge}
+                title="裁判"
+                presets={presets}
+                onChange={(v) => setForm((f) => ({ ...f, judge: v }))}
+              />
             </div>
           )}
         </section>
@@ -307,7 +441,10 @@ export function SetupPage() {
         <button className="btn primary big" onClick={start}>
           🔥 开始斗蛐蛐
         </button>
-        <p className="key-tip">API Key 仅保存在你的浏览器本地（localStorage），经本机代理转发，不会上传任何服务器。</p>
+        <p className="key-tip">
+          API Key 仅保存在你的浏览器本地（localStorage），经本机代理转发，不会上传任何服务器。
+          也可以在项目根目录 .env 中按 <code>前缀_API_KEY / 前缀_BASE_URL / 前缀_MODEL</code> 配置后一键导入（明文 key 不会离开服务端）。
+        </p>
       </div>
 
       <datalist id="baseurl-presets">

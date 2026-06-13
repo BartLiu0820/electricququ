@@ -32,6 +32,8 @@ export interface BluffState {
     loserId: string;
     pileCount: number;
   } | null;
+  /** 待收走的底牌：质疑结算后底牌先留在牌桌展示，直到输家开新一轮才并入其手牌（避免牌桌与手牌重复） */
+  pendingCollect: { loserId: string; cards: Card[] } | null;
   winnerId: string | null;
 }
 
@@ -66,12 +68,28 @@ function nextOf(state: BluffState, id: string): string {
   return state.players[(idx + 1) % state.players.length].id;
 }
 
+/** 行动者的有效手牌：若有待收走的底牌且归属于他，先并入再展示（用于出牌前的提示与校验） */
+function effHand(state: BluffState, id: string): Card[] {
+  if (state.pendingCollect && state.pendingCollect.loserId === id) {
+    return sortHand([...state.hands[id], ...state.pendingCollect.cards]);
+  }
+  return state.hands[id];
+}
+
 function handText(hand: Card[]): string {
   return hand.map((c, i) => `${i}:${cardLabel(c)}`).join('  ');
 }
 
+/** 显式告知玩家手中王（万能牌）的数量，避免模型误判自己没有王 */
+function jokerNote(hand: Card[]): string {
+  const n = hand.filter((c) => c.rank === 'JOKER').length;
+  return n > 0
+    ? `⚠️ 特别注意：你手中有 ${n} 张王（🃏，万能牌），可当作任何点数使用，记得把它们算进你的策略。`
+    : '你手中没有王。';
+}
+
 function countsText(state: BluffState): string {
-  return state.players.map((p) => `${p.name} 剩 ${state.hands[p.id].length} 张`).join('，');
+  return state.players.map((p) => `${p.name} 剩 ${effHand(state, p.id).length} 张`).join('，');
 }
 
 function normalizeRank(raw: unknown): string | null {
@@ -111,9 +129,18 @@ function randomOf<T>(arr: T[]): T {
   return arr[Math.floor(Math.random() * arr.length)];
 }
 
+function shuffle<T>(arr: T[]): T[] {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
 /** 测试机器人策略：尽量诚实地出最多的点数，偶尔说谎/质疑 */
 function botPlay(state: BluffState, actorId: string): { speech?: string; action: Record<string, unknown> } {
-  const hand = state.hands[actorId];
+  const hand = effHand(state, actorId);
   if (state.phase === 'respond') {
     const ownerEmpty = state.lastPlay && state.hands[state.lastPlay.playerId].length === 0;
     if (ownerEmpty || Math.random() < 0.25) return { action: { type: 'challenge' } };
@@ -163,21 +190,23 @@ export const bluffGame: GameDefinition<BluffState> = {
   judgeGoal: '你是本场吹牛比赛的解说裁判。在每次“抓”的验证之后，点评这次质疑的判断质量与局势变化。',
 
   setup: (players, judge) => {
+    const order = shuffle(players); // 掷硬币：随机先后手座次与发牌顺序
     const deck = buildDeck();
-    const hands: Record<string, Card[]> = Object.fromEntries(players.map((p) => [p.id, []]));
-    deck.forEach((card, i) => hands[players[i % players.length].id].push(card));
+    const hands: Record<string, Card[]> = Object.fromEntries(order.map((p) => [p.id, []]));
+    deck.forEach((card, i) => hands[order[i % order.length].id].push(card));
     for (const id of Object.keys(hands)) hands[id] = sortHand(hands[id]);
     return {
-      players: players.map((p) => ({ id: p.id, name: p.name })),
+      players: order.map((p) => ({ id: p.id, name: p.name })),
       judgeId: judge?.id ?? null,
       hands,
       pile: [],
       claims: [],
       currentRank: null,
       phase: 'lead',
-      turn: players[0].id,
+      turn: order[0].id,
       lastPlay: null,
       lastChallenge: null,
+      pendingCollect: null,
       winnerId: null,
     };
   },
@@ -197,7 +226,7 @@ export const bluffGame: GameDefinition<BluffState> = {
     }
 
     const actorId = state.turn;
-    const hand = state.hands[actorId];
+    const hand = effHand(state, actorId);
     const claimLog = state.claims
       .map((c) => `${name(state, c.playerId)} 声明出了 ${c.count} 张「${c.rank}」`)
       .join('；');
@@ -210,10 +239,12 @@ export const bluffGame: GameDefinition<BluffState> = {
           '你来开新一轮：声明一个点数 rank（A、2-10、J、Q、K），并用 cardIndexes 指定要扣出的 1~4 张手牌的序号。扣出的牌可以与声明不符（吹牛）。',
         visibleState: [
           `你的手牌（序号:牌面）：${handText(hand)}`,
+          jokerNote(hand),
           `各家手牌数：${countsText(state)}`,
           '桌面底牌堆：空（新一轮开始）',
         ].join('\n'),
         schemaHint: '{"type":"play","rank":"K","cardIndexes":[0,1]}',
+        decisive: true,
         botAction: () => botPlay(state, actorId),
       };
     }
@@ -234,11 +265,13 @@ export const bluffGame: GameDefinition<BluffState> = {
         .join('\n'),
       visibleState: [
         `你的手牌（序号:牌面）：${handText(hand)}`,
+        jokerNote(hand),
         `各家手牌数：${countsText(state)}`,
         `本轮声明点数：「${state.currentRank}」；本轮声明记录：${claimLog}`,
         `桌面底牌堆共 ${state.pile.length} 张（牌面不可见）`,
       ].join('\n'),
       schemaHint: `{"type":"play","rank":"${state.currentRank}","cardIndexes":[0]} 或 {"type":"challenge"}`,
+      decisive: true,
       botAction: () => botPlay(state, actorId),
     };
   },
@@ -266,7 +299,6 @@ export const bluffGame: GameDefinition<BluffState> = {
               : `谎话连篇！${name(state, play.playerId)} 被抓包，收走底牌 ${pileCount} 张`),
         ),
       );
-      const hands = { ...state.hands, [loserId]: sortHand([...state.hands[loserId], ...state.pile]) };
       const challenge = {
         seq: (state.lastChallenge?.seq ?? 0) + 1,
         challengerId: actorId,
@@ -277,21 +309,23 @@ export const bluffGame: GameDefinition<BluffState> = {
         pileCount,
       };
       if (truthful && state.hands[play.playerId].length === 0) {
+        // 对方出完且经受住质疑，立即获胜——游戏结束，底牌无需再并入任何人
         events.push(makeEvent('system', `${name(state, play.playerId)} 手牌全部出完且经受住质疑，获胜！🏆`));
         return {
-          state: { ...state, hands, pile: [], claims: [], currentRank: null, lastPlay: null, lastChallenge: challenge, phase: 'done', winnerId: play.playerId },
+          state: { ...state, pile: [], claims: [], currentRank: null, lastPlay: null, lastChallenge: challenge, pendingCollect: null, phase: 'done', winnerId: play.playerId },
           events,
         };
       }
+      // 底牌先留在牌桌展示（pendingCollect），等输家开新一轮时才并入其手牌，避免牌桌与手牌出现重复牌
       return {
         state: {
           ...state,
-          hands,
           pile: [],
           claims: [],
           currentRank: null,
           lastPlay: null,
           lastChallenge: challenge,
+          pendingCollect: { loserId, cards: state.pile },
           phase: state.judgeId ? 'judge' : 'lead',
           turn: loserId,
         },
@@ -310,21 +344,31 @@ export const bluffGame: GameDefinition<BluffState> = {
       };
     }
 
-    const v = validatePlay(state, actorId, action);
+    // 若该玩家正开新一轮且有待收的底牌，此刻才把底牌并入其手牌（牌桌展示到此结束）
+    let work = state;
+    if (state.pendingCollect && state.pendingCollect.loserId === actorId) {
+      const merged = sortHand([...state.hands[actorId], ...state.pendingCollect.cards]);
+      work = { ...state, hands: { ...state.hands, [actorId]: merged }, pendingCollect: null };
+      events.push(
+        makeEvent('action', `${name(state, actorId)} 收走底牌 ${state.pendingCollect.cards.length} 张并入手牌（现 ${merged.length} 张），开启新一轮`),
+      );
+    }
+
+    const v = validatePlay(work, actorId, action);
     if ('error' in v) return { state, events: [], error: v.error };
 
-    const hand = state.hands[actorId];
+    const hand = work.hands[actorId];
     const played = v.indexes.map((i) => hand[i]);
     const remaining = hand.filter((_, i) => !v.indexes.includes(i));
-    const prevOwner = state.lastPlay?.playerId ?? null;
+    const prevOwner = work.lastPlay?.playerId ?? null;
 
-    events.push(makeEvent('action', `${name(state, actorId)} 声明扣出 ${played.length} 张「${v.rank}」（牌面未公开）`));
+    events.push(makeEvent('action', `${name(work, actorId)} 声明扣出 ${played.length} 张「${v.rank}」（牌面未公开）`));
 
     const next: BluffState = {
-      ...state,
-      hands: { ...state.hands, [actorId]: remaining },
-      pile: [...state.pile, ...played],
-      claims: [...state.claims, { playerId: actorId, count: played.length, rank: v.rank }],
+      ...work,
+      hands: { ...work.hands, [actorId]: remaining },
+      pile: [...work.pile, ...played],
+      claims: [...work.claims, { playerId: actorId, count: played.length, rank: v.rank }],
       currentRank: v.rank,
       lastPlay: { playerId: actorId, cards: played, count: played.length, rank: v.rank },
       phase: 'respond',
@@ -332,12 +376,12 @@ export const bluffGame: GameDefinition<BluffState> = {
     };
 
     // 跟出即默认不质疑：若上家已空手，上家立即获胜
-    if (state.phase === 'respond' && prevOwner && state.hands[prevOwner].length === 0) {
-      events.push(makeEvent('system', `${name(state, prevOwner)} 手牌出完且无人质疑，获胜！🏆`));
+    if (work.phase === 'respond' && prevOwner && work.hands[prevOwner].length === 0) {
+      events.push(makeEvent('system', `${name(work, prevOwner)} 手牌出完且无人质疑，获胜！🏆`));
       return { state: { ...next, phase: 'done', winnerId: prevOwner }, events };
     }
 
-    next.turn = nextOf(state, actorId);
+    next.turn = nextOf(work, actorId);
     return { state: next, events };
   },
 
