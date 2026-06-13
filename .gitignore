@@ -13,3 +13,8 @@ dist/
 npm-debug.log*
 Thumbs.db
 .DS_Store
+
+# 开发文档与问题记录
+开发日志.md
+电子斗蛐蛐.md
+问题记录.md
