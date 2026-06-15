@@ -12,17 +12,22 @@ function actorName(config: MatchConfig, id?: string): string {
   return p?.name ?? id;
 }
 
+/** 单条记录截断，避免啰嗦的裁判点评/发言随回合累积把上下文撑大 */
+function clip(text: string, max = 160): string {
+  return text.length > max ? text.slice(0, max) + '…' : text;
+}
+
 /** 把公开事件流转成给 AI 看的过程记录（不含任何隐藏信息） */
 function publicLog(config: MatchConfig, events: GameEvent[]): string {
   return events
     .filter((e) => e.type !== 'thinking') // 思考过程是各模型私有，不进入对手可见的公开记录
-    .slice(-50)
+    .slice(-40)
     .map((e) =>
       e.type === 'speech'
-        ? `${actorName(config, e.actorId)} 说：“${e.text}”`
+        ? `${actorName(config, e.actorId)} 说：“${clip(e.text)}”`
         : e.type === 'judge'
-          ? `裁判：${e.text}`
-          : `〔${e.text}〕`,
+          ? `裁判：${clip(e.text)}`
+          : `〔${clip(e.text)}〕`,
     )
     .join('\n');
 }
@@ -52,9 +57,11 @@ export function buildMessages(
     '【你的目标】',
     goal,
     '',
+    '【语言】请始终使用简体中文进行思考与表达——包括你的内部推理过程（reasoning / 思维链）、thought 小结、speech 发言，全部用中文，不要用英文思考。',
+    '',
     '【输出格式】',
     '你必须只输出一个 JSON 对象，不要输出任何 JSON 之外的文字。格式：',
-    `{"thought": "（可选）用不超过300字概括你这一步的核心心理博弈思路", "speech": "（可选）你想公开说的话，不想说就省略此字段", "action": ${pending.schemaHint}}`,
+    `{"thought": "（可选）用不超过200字概括你这一步的核心心理博弈思路", "speech": "（可选）你想公开说的话，不想说就省略此字段", "action": ${pending.schemaHint}}`,
     'thought 字段是你的私密思考小结，只有你自己和观众能看到，不会发给其他玩家；请在其中提炼关键的博弈判断（如何读对手、为何这样决策），而不是复述规则。',
     pending.suppressSpeech ? '注意：本步为秘密行动，speech 将被忽略，请不要试图通过发言泄露信息。' : '',
   ]

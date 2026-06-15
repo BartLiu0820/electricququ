@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { deleteCustomSpec, listGames } from '../games/registry';
 import { useMatch } from '../store/match';
+import { sfx } from '../sound';
 import type { ApiConfig, MatchConfig, Participant } from '../types';
 import { GameEditor } from './GameEditor';
 
@@ -239,6 +240,7 @@ export function SetupPage() {
   const [editorOpen, setEditorOpen] = useState(false);
   const [err, setErr] = useState('');
   const [presets, setPresets] = useState<EnvPreset[]>([]);
+  const [simMode, setSimMode] = useState(false);
 
   useEffect(() => {
     localStorage.setItem(SETUP_KEY, JSON.stringify(form));
@@ -270,6 +272,7 @@ export function SetupPage() {
     setForm((f) => ({ ...f, players: f.players.map((p, j) => (j === i ? s : p)) }));
 
   const start = () => {
+    sfx.click();
     setErr('');
     const players: Participant[] = [];
     for (let i = 0; i < form.playerCount; i++) {
@@ -310,7 +313,7 @@ export function SetupPage() {
       judge,
       options: { totalRounds: form.totalRounds },
     };
-    startMatch(config);
+    startMatch(config, simMode);
   };
 
   return (
@@ -327,7 +330,10 @@ export function SetupPage() {
             <div
               key={g.id}
               className={`game-card ${form.gameId === g.id ? 'selected' : ''}`}
-              onClick={() => setForm((f) => ({ ...f, gameId: g.id }))}
+              onClick={() => {
+                sfx.select();
+                setForm((f) => ({ ...f, gameId: g.id }));
+              }}
             >
               <div className="game-card-head">
                 <span className="game-name">
@@ -438,8 +444,15 @@ export function SetupPage() {
       {err && <div className="form-error">⚠️ {err}</div>}
 
       <div className="start-row">
+        <label className="sim-toggle">
+          <input type="checkbox" checked={simMode} onChange={(e) => setSimMode(e.target.checked)} />
+          <span>
+            <b>预先模拟模式</b>
+            <span className="sim-hint">先在后台跑完全局再演绎 — 推进时无需等待，适合快速观看结果</span>
+          </span>
+        </label>
         <button className="btn primary big" onClick={start}>
-          🔥 开始斗蛐蛐
+          {simMode ? '⚙️ 模拟并开始' : '🔥 开始斗蛐蛐'}
         </button>
         <p className="key-tip">
           API Key 仅保存在你的浏览器本地（localStorage），经本机代理转发，不会上传任何服务器。

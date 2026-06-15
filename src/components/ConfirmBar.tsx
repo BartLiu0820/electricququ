@@ -1,8 +1,9 @@
 import { useMatch } from '../store/match';
+import { sfx } from '../sound';
 
 export function ConfirmBar() {
-  const { pending, status, error, autoPlay, advance, setAutoPlay, config } = useMatch();
-  if (!config || status === 'finished' || status === 'idle') return null;
+  const { pending, status, error, autoPlay, advance, setAutoPlay, config, simulatedSteps } = useMatch();
+  if (!config || status === 'finished' || status === 'idle' || status === 'simulating') return null;
 
   const actor = pending
     ? (config.players.find((p) => p.id === pending.actorId) ??
@@ -36,10 +37,22 @@ export function ConfirmBar() {
       {!error && status === 'awaiting-confirm' && pending && (
         <div className="confirm-main">
           <span className="next-label">
-            下一步：<b>{actorLabel}</b> · {pending.phase}
+            {pending.system ? (
+              <b>🎬 {pending.phase}时刻！</b>
+            ) : (
+              <>
+                下一步：<b>{actorLabel}</b> · {pending.phase}
+              </>
+            )}
           </span>
-          <button className="btn primary" onClick={() => void advance()}>
-            ▶ 推进
+          <button
+            className={`btn primary ${pending.system ? 'reveal-btn' : ''}`}
+            onClick={() => {
+              sfx.click();
+              void advance();
+            }}
+          >
+            {pending.system ? `🎬 ${pending.phase}！` : simulatedSteps ? '⚡ 快进' : '▶ 推进'}
           </button>
         </div>
       )}

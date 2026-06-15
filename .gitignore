@@ -17,3 +17,6 @@ Thumbs.db
 # 开发文档与问题记录
 开发日志.md
 问题记录.md
+
+# Claude Code 本机配置（命令权限白名单，机器本地专属）
+.claude/settings.local.json

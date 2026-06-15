@@ -23,6 +23,16 @@ export interface PendingAction {
   simultaneous?: string[];
   /** 即使 suppressSpeech 也展示思考过程（用于同时出拳——全员决定完才揭幕，不算剧透） */
   revealThinking?: boolean;
+  /** 强制不展示该步思考（如最后发言者发言即出拳：发言公开但出拳保密，思考会泄露选择） */
+  hideThinking?: boolean;
+  /** 系统步骤：无需任何模型/机器人参与（如石头剪子布的「亮拳」揭晓步），点击推进即应用 botAction 的动作 */
+  system?: boolean;
+  /**
+   * 该步思考可实时流式展示（推进时边生成边显示思维链）。
+   * 仅用于思考立即公开、无保密手势可剧透的步骤（喊话、出牌/抓、裁判点评）；
+   * 秘密出拳等步骤不可设，否则会提前泄露选择。
+   */
+  streamThinking?: boolean;
   /** 测试机器人 / AI 连续失败时的兜底动作 */
   botAction: () => AIResponse;
 }

@@ -15,8 +15,16 @@ function CardChip({ card, big, lie }: { card: Card; big?: boolean; lie?: boolean
 
 export function CardTable({ state, judge }: GameViewProps<BluffState>) {
   const [peek, setPeek] = useState(false);
+  // 质疑后到收牌前：底牌翻开留在牌桌展示
+  const revealPhase = !!state.lastChallenge && (state.phase === 'judge' || state.phase === 'collect');
   const activeId =
-    state.phase === 'lead' || state.phase === 'respond' ? state.turn : state.phase === 'judge' ? state.judgeId : null;
+    state.phase === 'lead' || state.phase === 'respond'
+      ? state.turn
+      : state.phase === 'judge'
+        ? state.judgeId
+        : state.phase === 'collect'
+          ? (state.lastChallenge?.loserId ?? null)
+          : null;
   const lastClaim = state.claims[state.claims.length - 1] ?? null;
 
   // 按声明顺序把底牌堆切回每一手（pile 是各次出牌的顺序拼接）
@@ -36,6 +44,7 @@ export function CardTable({ state, judge }: GameViewProps<BluffState>) {
         <span className="phase-chip">
           {state.phase === 'lead' && '🃏 开新一轮'}
           {state.phase === 'respond' && '🤔 跟出或抓'}
+          {state.phase === 'collect' && '📥 收牌中'}
           {state.phase === 'judge' && '👨‍⚖️ 裁判点评中'}
           {state.phase === 'done' && '🏁 比赛结束'}
         </span>
@@ -43,17 +52,30 @@ export function CardTable({ state, judge }: GameViewProps<BluffState>) {
 
       <div className="table-felt">
         <div className="pile-area">
-          {state.lastChallenge && state.pile.length === 0 ? (
-            <div key={state.lastChallenge.seq} className="challenge-reveal">
-              <div className="reveal-cards">
-                {state.lastChallenge.cards.map((c, i) => (
-                  <span key={c.id} className="flip-card" style={{ animationDelay: `${i * 0.15}s` }}>
-                    <CardChip card={c} big />
-                  </span>
+          {revealPhase ? (
+            <div key={state.lastChallenge!.seq} className="challenge-reveal">
+              <div className={`verdict ${state.lastChallenge!.truthful ? 'honest' : 'liar'}`}>
+                {state.lastChallenge!.truthful ? '✅ 句句属实' : '❌ 谎话连篇'}
+              </div>
+              <div className="reveal-grouped">
+                {claimGroups.map((g, i) => (
+                  <div key={i} className="peek-row">
+                    <span className="peek-claim">
+                      {state.players.find((p) => p.id === g.playerId)?.name} 声明「{g.rank}」×{g.count}
+                    </span>
+                    <span className="peek-cards">
+                      {g.cards.map((c) => (
+                        <span key={c.id} className="flip-card">
+                          <CardChip card={c} lie={c.rank !== g.rank && c.rank !== 'JOKER'} />
+                        </span>
+                      ))}
+                    </span>
+                  </div>
                 ))}
               </div>
-              <div className={`verdict ${state.lastChallenge.truthful ? 'honest' : 'liar'}`}>
-                {state.lastChallenge.truthful ? '✅ 句句属实' : '❌ 谎话连篇'}
+              <div className="collect-label">
+                📥 {state.players.find((p) => p.id === state.lastChallenge!.loserId)?.name} 将收走牌桌全部{' '}
+                {state.pile.length} 张{state.phase === 'collect' ? '（点击「收牌」并入手牌）' : ''}
               </div>
             </div>
           ) : (

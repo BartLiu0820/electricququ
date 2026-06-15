@@ -10,7 +10,7 @@ export interface RpsState {
   judgeId: string | null;
   totalRounds: number;
   round: number;
-  phase: 'talk' | 'throw' | 'judge' | 'done';
+  phase: 'talk' | 'throw' | 'reveal' | 'judge' | 'done';
   talkIdx: number;
   talks: { id: string; text: string }[];
   throws: Record<string, RpsMove>;
@@ -122,6 +122,28 @@ export const rpsGame: GameDefinition<RpsState> = {
     if (state.phase === 'talk') {
       const actor = state.players[state.talkIdx];
       const said = state.talks.map((t) => `${name(state, t.id)}：“${t.text}”`).join('\n');
+      const isLastSpeaker = state.talkIdx === state.players.length - 1;
+
+      // 最后一个发言的玩家：发言后已掌握全部喊话、再无新信息，故发言的同时直接秘密出拳，
+      // 不再单独进行一轮出拳思考。发言公开，出拳保密，思考不展示（避免提前泄露手势）。
+      if (isLastSpeaker) {
+        return {
+          actorId: actor.id,
+          phase: '发言并出拳',
+          instruction:
+            '你是本局最后一个发言的玩家——发言之后所有人的喊话你都已听到，不会再有新信息了。因此请在发言的同时直接秘密出拳：speech 字段公开说一句话，action 里给出你的手势 move（"rock" 石头 / "paper" 布 / "scissors" 剪刀）。其他玩家看不到你的出拳。',
+          visibleState: `${common}\n本局已喊话：\n${said || '（其他人已全部发言）'}\n（你已掌握全部喊话，此刻发言并同时秘密出拳）`,
+          schemaHint: '{"type":"throw","move":"rock|paper|scissors"}',
+          decisive: true,
+          revealThinking: true, // 展示其思考（出拳手势仍保密，直到亮拳才揭晓）
+          streamThinking: true, // 实时流式展示其思考（小结本就会公开，故不算新增剧透）
+          botAction: () => ({
+            speech: randomOf(TALK_BOTS),
+            action: { type: 'throw', move: randomOf(['rock', 'paper', 'scissors'] as RpsMove[]) },
+          }),
+        };
+      }
+
       return {
         actorId: actor.id,
         phase: '喊话',
@@ -129,6 +151,7 @@ export const rpsGame: GameDefinition<RpsState> = {
           '喊话阶段：请在 speech 字段里说一句话进行心理博弈（也可以不说话）。action 固定为 {"type":"talk"}。',
         visibleState: `${common}\n本局已喊话：\n${said || '（你是第一个发言的）'}`,
         schemaHint: '{"type":"talk"}',
+        streamThinking: true, // 喊话无保密手势，思考可实时流式展示
         botAction: () => ({ speech: randomOf(TALK_BOTS), action: { type: 'talk' } }),
       };
     }
@@ -138,18 +161,32 @@ export const rpsGame: GameDefinition<RpsState> = {
       const talks = state.talks.map((t) => `${name(state, t.id)}：“${t.text}”`).join('\n');
       return {
         actorId: pendingIds[0],
-        simultaneous: pendingIds, // 全员一步同时出拳
+        simultaneous: pendingIds, // 先发言的玩家此刻一步同时出拳
         revealThinking: true, // 都决定完才揭幕，故出拳思考可展示
+        streamThinking: true, // 实时流式展示出拳思考（两人局为单人步即时流式；多人局仍在揭幕时统一呈现）
         phase: '同时出拳',
         instruction:
-          '出拳阶段：所有玩家此刻同时秘密出拳，你看不到别人的选择，别人也看不到你的。请结合本局喊话综合判断后，秘密选择你的手势，move 取 "rock"（石头）/"paper"（布）/"scissors"（剪刀）之一。',
-        visibleState: `${common}\n本局喊话记录：\n${talks || '（无人发言）'}\n（所有人此刻同时出拳，彼此选择互不可见）`,
+          '出拳阶段：你之前发言时还没听到后面玩家的喊话，现在所有人的喊话都已公开。请结合全部喊话重新综合判断（必要时改变主意），此刻秘密出拳，move 取 "rock"（石头）/"paper"（布）/"scissors"（剪刀）之一。最后发言的玩家已在发言时出拳，你们彼此的选择互不可见。',
+        visibleState: `${common}\n本局喊话记录：\n${talks || '（无人发言）'}\n（你与其他未出拳玩家此刻同时出拳，彼此选择互不可见）`,
         schemaHint: '{"type":"throw","move":"rock|paper|scissors"}',
         suppressSpeech: true,
         decisive: true,
         botAction: () => ({
           action: { type: 'throw', move: randomOf(['rock', 'paper', 'scissors'] as RpsMove[]) },
         }),
+      };
+    }
+
+    if (state.phase === 'reveal') {
+      // 亮拳：系统步骤，无需任何模型参与，点击推进即同时揭晓双方手势并评判
+      return {
+        actorId: '',
+        system: true,
+        phase: '亮拳',
+        instruction: '',
+        visibleState: '',
+        schemaHint: '',
+        botAction: () => ({ action: { type: 'reveal' } }),
       };
     }
 
@@ -161,18 +198,33 @@ export const rpsGame: GameDefinition<RpsState> = {
         '请在 speech 字段点评刚刚结束的这一局（各玩家的喊话与出拳、局势变化）。action 固定为 {"type":"comment"}。',
       visibleState: `${common}\n刚刚一局的结果：${state.lastReveal?.text ?? ''}`,
       schemaHint: '{"type":"comment"}',
+      streamThinking: true,
       botAction: () => ({ speech: randomOf(JUDGE_BOTS), action: { type: 'comment' } }),
     };
   },
 
   applyAction: (state, actorId, action, speech) => {
     if (state.phase === 'talk') {
+      const isLastSpeaker = state.talkIdx === state.players.length - 1;
       const talks = [...state.talks, { id: actorId, text: speech ?? '（沉默）' }];
       const talkIdx = state.talkIdx + 1;
-      const next: RpsState =
-        talkIdx >= state.players.length
-          ? { ...state, talks, talkIdx, phase: 'throw' }
-          : { ...state, talks, talkIdx };
+
+      // 最后发言者：发言的同时秘密出拳
+      if (isLastSpeaker) {
+        const move = normalizeMove((action as { move?: unknown }).move);
+        if (!move) {
+          return { state, events: [], error: 'move 必须是 "rock"、"paper" 或 "scissors" 之一' };
+        }
+        const events: GameEvent[] = [];
+        if (!speech) events.push(makeEvent('action', `${name(state, actorId)} 选择保持沉默`));
+        events.push(makeEvent('action', `${name(state, actorId)} 已秘密出拳 🤫`));
+        return {
+          state: { ...state, talks, talkIdx, throws: { ...state.throws, [actorId]: move }, phase: 'throw' },
+          events,
+        };
+      }
+
+      const next: RpsState = { ...state, talks, talkIdx };
       const events: GameEvent[] = speech
         ? []
         : [makeEvent('action', `${name(state, actorId)} 选择保持沉默`)];
@@ -187,11 +239,17 @@ export const rpsGame: GameDefinition<RpsState> = {
       const throws = { ...state.throws, [actorId]: move };
       const events: GameEvent[] = [makeEvent('action', `${name(state, actorId)} 已秘密出拳 🤫`)];
 
-      if (Object.keys(throws).length < state.players.length) {
-        return { state: { ...state, throws }, events };
+      // 全部出拳：先进入「亮拳」阶段，等用户推进亮拳步才揭晓评分（出拳与揭晓拆开）
+      if (Object.keys(throws).length >= state.players.length) {
+        events.push(makeEvent('system', '双方均已出拳，点击「亮拳」揭晓！'));
+        return { state: { ...state, throws, phase: 'reveal' }, events };
       }
+      return { state: { ...state, throws }, events };
+    }
 
-      // 全部出拳，亮拳计分
+    if (state.phase === 'reveal') {
+      // 亮拳：同时揭晓全部手势并计分
+      const throws = state.throws;
       const gains: Record<string, number> = Object.fromEntries(state.players.map((p) => [p.id, 0]));
       for (let i = 0; i < state.players.length; i++) {
         for (let j = i + 1; j < state.players.length; j++) {
@@ -213,11 +271,10 @@ export const rpsGame: GameDefinition<RpsState> = {
               .filter((p) => gains[p.id] > 0)
               .map((p) => `${p.name} +${gains[p.id]} 分`)
               .join('，'));
-      events.push(makeEvent('reveal', `第 ${state.round} 局亮拳：${revealText}`));
+      const events: GameEvent[] = [makeEvent('reveal', `第 ${state.round} 局亮拳：${revealText}`)];
 
       let next: RpsState = {
         ...state,
-        throws,
         scores,
         lastReveal: { round: state.round, throws, gains, text: revealText },
       };

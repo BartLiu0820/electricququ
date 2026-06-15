@@ -24,11 +24,16 @@ function ThinkBubble({ text, detail }: { text: string; detail?: string }) {
 export function ChatLog() {
   const events = useMatch((s) => s.events);
   const config = useMatch((s) => s.config);
+  const streamingThinking = useMatch((s) => s.streamingThinking);
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    ref.current?.scrollTo({ top: ref.current.scrollHeight, behavior: 'smooth' });
-  }, [events.length]);
+    // 流式时用 instant 跟上 token 速度，保证最新内容始终在视野内；其余用平滑滚动
+    ref.current?.scrollTo({
+      top: ref.current.scrollHeight,
+      behavior: streamingThinking ? 'auto' : 'smooth',
+    });
+  }, [events.length, streamingThinking?.text]);
 
   const nameOf = (id?: string) => {
     if (!id || !config) return '';
@@ -90,6 +95,19 @@ export function ChatLog() {
   return (
     <div className="chat-log" ref={ref}>
       {items}
+      {streamingThinking && (
+        <div className="chat-item">
+          <span className="chat-name" style={{ color: `hsl(${AVATAR_HUES[streamingThinking.actorId] ?? 0} 80% 70%)` }}>
+            {nameOf(streamingThinking.actorId)}
+          </span>
+          <div className="chat-think">
+            <div className="think-summary streaming">
+              💭 {streamingThinking.text || '思考中'}
+              <span className="stream-caret">▍</span>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
